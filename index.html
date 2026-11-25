@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f3d5c">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>İş Fotoğraf Arşivi</title>
+<style>
+#yuk{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:#fff;color:#222;text-align:center;font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}
+#yuk small{color:#777}
+#yuk button,#cvPanel button{font:inherit;padding:9px 16px;border-radius:9px;border:1px solid #0f3d5c;background:#0f3d5c;color:#fff;cursor:pointer;margin:4px 0}
+#cvPanel button.ikincil{background:transparent;color:#0f3d5c}
+#cvPanel button:disabled{opacity:.45;cursor:default}
+img.dpyok{outline:2px dashed #c62828;outline-offset:-8px}
+#cvBtn{position:fixed;left:12px;bottom:12px;z-index:25;width:46px;height:46px;border-radius:50%;border:0;background:#0f3d5c;color:#fff;font-size:21px;box-shadow:0 3px 10px rgba(0,0,0,.3);cursor:pointer}
+#cvBtn.uyari:after{content:"";position:absolute;top:3px;right:3px;width:11px;height:11px;border-radius:50%;background:#f5a623;border:2px solid #fff}
+#cvBtn.calisiyor{background:#2e7db2}
+#cvPanel{position:fixed;left:0;right:0;bottom:0;z-index:70;max-height:88vh;overflow:auto;background:#fff;color:#222;border-radius:16px 16px 0 0;box-shadow:0 -6px 30px rgba(0,0,0,.35);font:14.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:14px 16px 22px;display:none}
+#cvPanel.acik{display:block}
+#cvPanel h3{margin:2px 0 10px;font-size:17px;display:flex;justify-content:space-between;align-items:center}
+#cvPanel h3 button{margin:0;padding:4px 12px}
+#cvPanel .blok{border-top:1px solid #e3e6ea;padding:10px 0}
+#cvPanel .kucuk{color:#666;font-size:12.5px}
+#cvPanel .cubuk{height:9px;border-radius:5px;background:#e3e6ea;overflow:hidden;margin:6px 0}
+#cvPanel .cubuk i{display:block;height:100%;background:#2e7db2;width:0}
+#cvPanel details{margin:6px 0}
+#cvPanel summary{cursor:pointer;padding:4px 0;font-weight:600}
+#cvPanel label{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid #f0f2f4}
+#cvPanel label span{flex:1}
+#cvPanel label input{margin-top:4px}
+#dpNot{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:45;background:rgba(15,61,92,.92);color:#fff;font:13px/1.4 system-ui,sans-serif;padding:6px 12px;border-radius:14px;display:none;max-width:90vw;text-align:center}
+@media (prefers-color-scheme: dark){
+  #yuk,#cvPanel{background:#16191d;color:#e8e8e8}
+  #cvPanel .blok{border-color:#2b3036} #cvPanel label{border-color:#22262b} #cvPanel .kucuk{color:#9aa}
+  #cvPanel button.ikincil{color:#9cc8ea;border-color:#9cc8ea}
+}
+</style>
+</head>
+<body>
+<div id="yuk"><div>Arşiv açılıyor…</div></div>
+<div id="dpNot"></div>
+<script>
+/* İş Fotoğraf Arşivi, telefon uygulaması.
+   Arşiv sayfası ve verileri Drive'daki "İş Fotoğraf Arşivi" klasöründen bir kez alınıp telefonda saklanır; internetsiz açılır.
+   Fotoğraflar: bütün arşivin küçük önizlemeleri ve seçilen fotoğrafların tam boyu telefona indirilir.
+   İnternet ve Drive bağlantısı varsa telefonda olmayan fotoğraflar Drive'dan tam boy açılır. */
+(function(){
+"use strict";
+var CLIENT = "964276538283-itcrffiqhcmumtdkl92uq46097csf93t.apps.googleusercontent.com";   /* GemiTakip ile aynı Google girişi */
+var SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly";
+var API = "https://www.googleapis.com/drive/v3/files", UP = "https://www.googleapis.com/upload/drive/v3/files";
+var KLASOR = "application/vnd.google-apps.folder";
+var ARSIV_ADI = "İş Fotoğraf Arşivi", SAYFA = "Arşiv.html", TEL_KLASOR = "İş Fotoğraf Arşivi Telefon";
+var VERI = ["veri.js", "veri-gemi.js", "veri-oneri.js", "veri-foto.js", "veri-secki.js"];
+var ORT_FOTO = 210 * 1024;
+var RESIM = /\.(jpe?g|png|webp|gif)$/i;
+var yuk = document.getElementById("yuk"), not = document.getElementById("dpNot");
+function msg(h){ yuk.style.display = "flex"; yuk.firstChild.innerHTML = h; }
+function nfc(s){ return s && s.normalize ? s.normalize("NFC") : s; }
+function mb(b){ return b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB"; }
+function sayi(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, "."); }
+function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]; }); }
+function online(){ return navigator.onLine !== false; }
+function mobilVeri(){ var c = navigator.connection; return !!(c && c.type === "cellular"); }
+function bekle(ms){ return new Promise(function(ok){ setTimeout(ok, ms); }); }
+function tarih(t){ if(!t) return "hiç"; var d = new Date(t); return d.toLocaleDateString("tr-TR") + " " + d.toLocaleTimeString("tr-TR", {hour: "2-digit", minute: "2-digit"}); }
+
+var AYAR = {};
+try{ AYAR = JSON.parse(localStorage.getItem("arsiv-tel-ayar") || "{}") || {}; }catch(e){ AYAR = {}; }
+if(AYAR.sor === undefined) AYAR.sor = true;
+function ayarKaydet(){ try{ localStorage.setItem("arsiv-tel-ayar", JSON.stringify(AYAR)); }catch(e){} }
+
+/* ---------- telefondaki depo: veriler IndexedDB'de, büyük dosyalar tarayıcının dosya deposunda ---------- */
+var dbP = null;
+function db(){
+  if(!dbP) dbP = new Promise(function(ok){
+    try{
+      var r = indexedDB.open("arsiv-telefon", 2);
+      r.onupgradeneeded = function(){ var d = r.result; ["v", "tam", "dosya"].forEach(function(n){ if(!d.objectStoreNames.contains(n)) d.createObjectStore(n); }); };
+      r.onsuccess = function(){ ok(r.result); }; r.onerror = function(){ ok(null); };
+    }catch(e){ ok(null); }
+  });
+  return dbP;
+}
+function dbIs(store, mode, fn){
+  return db().then(function(d){
+    if(!d) return null;
+    return new Promise(function(ok){
+      try{
+        var tx = d.transaction(store, mode), q = fn(tx.objectStore(store));
+        tx.oncomplete = function(){ ok(q && q.result !== undefined ? q.result : null); };
+        tx.onerror = tx.onabort = function(){ ok(null); };
+      }catch(e){ ok(null); }
+    });
+  });
+}
+function dbAl(k){ return dbIs("v", "readonly", function(s){ return s.get(k); }); }
+function dbKoy(k, v){ return dbIs("v", "readwrite", function(s){ return s.put(v, k); }); }
+/* büyük dosyalar: tarayıcının dosya deposu; desteklemeyen telefonda IndexedDB */
+var OPFS_OK = !!(navigator.storage && navigator.storage.getDirectory && window.FileSystemFileHandle && FileSystemFileHandle.prototype.createWritable) && localStorage.getItem("arsiv-tel-opfs") !== "0";
+var opfsP = null;
+function opfs(){
+  if(!opfsP) opfsP = (navigator.storage && navigator.storage.getDirectory)
+    ? navigator.storage.getDirectory().then(function(r){ return r.getDirectoryHandle("arsiv", {create: true}); })
+    : Promise.reject(new Error("Bu tarayıcı büyük dosya deposunu desteklemiyor; Chrome kullan"));
+  return opfsP;
+}
+function dizin(ad){ return opfs().then(function(d){ return d.getDirectoryHandle(ad, {create: true}); }); }
+function yaz(dz, ad, govde){
+  if(!OPFS_OK) return (govde instanceof Blob ? Promise.resolve(govde) : new Response(govde).blob()).then(function(b){
+    return dbIs("dosya", "readwrite", function(s){ return s.put(b, dz + "/" + ad); }).then(function(){ return dbIs("dosya", "readonly", function(s){ return s.count(dz + "/" + ad); }); })
+      .then(function(n){ if(!n) throw new Error("Telefonun deposuna yazılamadı"); });
+  });
+  return dizin(dz).then(function(d){ return d.getFileHandle(ad, {create: true}); }).then(function(h){
+    return h.createWritable().then(function(w){
+      if(govde instanceof Blob) return w.write(govde).then(function(){ return w.close(); });
+      return govde.pipeTo(w);   /* yarıda kalırsa eski dosya bozulmaz */
+    });
+  });
+}
+function oku(dz, ad){
+  if(!OPFS_OK) return dbIs("dosya", "readonly", function(s){ return s.get(dz + "/" + ad); }).then(function(b){ if(!b) throw new Error("yok"); return b; });
+  return dizin(dz).then(function(d){ return d.getFileHandle(ad); }).then(function(h){ return h.getFile(); });
+}
+function ozet(s){   /* dosya adı için kısa özet */
+  var a = 0x811c9dc5, b = 0x9747b28c;
+  for(var i = 0; i < s.length; i++){ var c = s.charCodeAt(i); a = Math.imul(a ^ c, 16777619) >>> 0; b = Math.imul(b ^ c, 2246822519) >>> 0; }
+  return ("0000000" + a.toString(16)).slice(-8) + ("0000000" + b.toString(16)).slice(-8);
+}
+function depoKalici(){ try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){} }
+
+/* ---------- Google girişi: GemiTakip'teki gibi; anahtar bir saat geçerli ---------- */
+var TOK = {t: null, e: 0}, gisP = null;
+try{ var st = JSON.parse(sessionStorage.getItem("arsiv_tok") || "null"); if(st && st.e > Date.now() + 60000) TOK = st; }catch(e){}
+function tokOk(){ return !!TOK.t && Date.now() < TOK.e - 60000; }
+function gisYukle(){
+  if(window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if(gisP) return gisP;
+  gisP = new Promise(function(ok, no){
+    var s = document.createElement("script"); s.src = "https://accounts.google.com/gsi/client"; s.async = true;
+    s.onload = function(){ ok(); }; s.onerror = function(){ gisP = null; no(new Error("Google girişi yüklenemedi; internet yok gibi")); };
+    document.head.appendChild(s);
+  });
+  return gisP;
+}
+/* dokunuşla çağrılır: Google penceresi açılır */
+function baglan(){
+  if(!online()) return Promise.reject(new Error("İnternet yok; Drive bağlantısı internet gelince yapılır"));
+  return gisYukle().then(function(){
+    return new Promise(function(ok, no){
+      var c = google.accounts.oauth2.initTokenClient({client_id: CLIENT, scope: SCOPE,
+        callback: function(r){
+          if(r && r.access_token){
+            TOK = {t: r.access_token, e: Date.now() + (+r.expires_in || 3600) * 1000};
+            try{ sessionStorage.setItem("arsiv_tok", JSON.stringify(TOK)); }catch(e){}
+            ok(); yenidenBagla(); panelCiz();
+          } else no(new Error((r && r.error) || "giriş olmadı"));
+        },
+        error_callback: function(e){ no(new Error((e && e.type) || "giriş penceresi kapandı")); }});
+      c.requestAccessToken({prompt: ""});
+    });
+  });
+}
+function baglanHata(){ var e = new Error("Drive'a bağlı değil; alttaki ⇩ düğmesinden Drive'a bağlan"); e.baglan = 1; return e; }
+function api(url, opt, deneme){
+  deneme = deneme || 0; opt = opt || {};
+  if(!tokOk()) return Promise.reject(baglanHata());
+  var o = {}; for(var k in opt) o[k] = opt[k];
+  o.headers = {Authorization: "Bearer " + TOK.t}; for(var h in (opt.headers || {})) o.headers[h] = opt.headers[h];
+  var get = !opt.method || opt.method === "GET";
+  return fetch(url, o).then(function(r){
+    if(r.status === 401){ TOK = {t: null, e: 0}; try{ sessionStorage.removeItem("arsiv_tok"); }catch(e){} panelCiz(); throw baglanHata(); }
+    if((r.status === 429 || r.status >= 500 || (r.status === 403 && get)) && deneme < 4)
+      return bekle(800 * (deneme + 1)).then(function(){ return api(url, opt, deneme + 1); });
+    if(!r.ok) throw new Error("Drive yanıtı " + r.status);
+    return r;
+  }, function(e){
+    if(get && deneme < 3) return bekle(1500 * (deneme + 1)).then(function(){ return api(url, opt, deneme + 1); });
+    throw e;
+  });
+}
+var aktif = 0, sira = [];
+function slot(fn){ return new Promise(function(ok, no){ sira.push([fn, ok, no]); pompa(); }); }
+function pompa(){
+  while(aktif < 6 && sira.length){
+    var q = sira.shift(); aktif++;
+    Promise.resolve().then(q[0]).then(q[1], q[2]).then(function(){ aktif--; pompa(); });
+  }
+}
+function liste(q, alanlar){
+  var out = [];
+  function sayfa(tk){
+    var u = API + "?pageSize=1000&spaces=drive&q=" + encodeURIComponent(q) + "&fields=" + encodeURIComponent("nextPageToken,files(" + alanlar + ")") + (tk ? "&pageToken=" + encodeURIComponent(tk) : "");
+    return slot(function(){ return api(u).then(function(r){ return r.json(); }); })
+      .then(function(j){ out = out.concat(j.files || []); return j.nextPageToken ? sayfa(j.nextPageToken) : out; });
+  }
+  return sayfa("");
+}
+function tirnak(s){ return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'"); }
+function kokBul(){
+  if(AYAR.kok) return Promise.resolve(AYAR.kok);
+  return liste("name = '" + tirnak(ARSIV_ADI) + "' and mimeType = '" + KLASOR + "' and trashed = false", "id").then(function(fs){
+    return Promise.all(fs.map(function(f){
+      return liste("'" + f.id + "' in parents and name = 'veri.js' and trashed = false", "id,modifiedTime").then(function(v){ return v.length ? {id: f.id, t: v[0].modifiedTime} : null; });
+    }));
+  }).then(function(r){
+    r = r.filter(Boolean).sort(function(a, b){ return a.t < b.t ? 1 : -1; });
+    if(!r.length) throw new Error("Drive'da İş Fotoğraf Arşivi klasörü bulunamadı");
+    AYAR.kok = r[0].id; ayarKaydet(); return AYAR.kok;
+  });
+}
+
+/* ---------- Drive'da klasör yolu -> kimlik, klasördeki dosyalar ---------- */
+var COCUK = {}, YOL = {}, DOSYA = {};
+function cocuk(id){
+  if(!COCUK[id]) COCUK[id] = liste("'" + id + "' in parents and mimeType = '" + KLASOR + "' and trashed = false", "id,name")
+    .then(function(fs){ var m = {}; fs.forEach(function(f){ m[nfc(f.name)] = f.id; }); return m; }, function(e){ delete COCUK[id]; throw e; });
+  return COCUK[id];
+}
+function klasor(yol){
+  if(yol === "") return kokBul();
+  if(YOL[yol]) return YOL[yol];
+  var i = yol.lastIndexOf("/"), ust = i < 0 ? "" : yol.slice(0, i), ad = nfc(yol.slice(i + 1));
+  YOL[yol] = klasor(ust).then(function(pid){
+    if(!pid) return "";
+    return cocuk(pid).then(function(m){ return m[ad] || ""; });
+  });
+  YOL[yol].catch(function(){ delete YOL[yol]; });
+  return YOL[yol];
+}
+function dosyalar(id){
+  var c = DOSYA[id];
+  if(c && Date.now() - c.t < 40 * 60 * 1000) return c.p;   /* önizleme bağlantıları birkaç saat geçerli */
+  var p = liste("'" + id + "' in parents and mimeType != '" + KLASOR + "' and trashed = false", "id,name,size,thumbnailLink,webViewLink")
+    .then(function(fs){ var m = {}; fs.forEach(function(f){ m[nfc(f.name)] = f; }); return m; });
+  DOSYA[id] = {t: Date.now(), p: p};
+  p.catch(function(){ delete DOSYA[id]; });
+  return p;
+}
+function dosya(rel){
+  var i = rel.lastIndexOf("/"), dir = i < 0 ? "" : rel.slice(0, i), ad = nfc(rel.slice(i + 1));
+  return klasor(dir).then(function(id){ return id ? dosyalar(id).then(function(m){ return m[ad] || null; }) : null; });
+}
+
+/* ---------- önizlemeler: bütün fotoğrafların küçük kopyaları paketler halinde telefonda ---------- */
+var KUC = null, KUCP = null, PAKF = {};
+function kucukHazirla(){
+  if(KUC) return Promise.resolve(KUC);
+  if(!KUCP) KUCP = dbAl("liste").then(function(t){
+    var m = new Map();
+    if(t) t.split("\n").forEach(function(l){ var r = l.split("\t"); if(r.length >= 4) m.set(nfc(r[0].replace(/\r$/, "")), [+r[1], +r[2], parseInt(r[3], 10)]); });
+    KUC = m; KUCP = null; return m;
+  });
+  return KUCP;
+}
+function paketAdi(n){ return "kucuk-" + (n < 10 ? "0" : "") + n + ".bin"; }
+function kucukUrl(rel){
+  return kucukHazirla().then(function(m){
+    var e = m.get(nfc(rel)); if(!e) return null;
+    var ad = paketAdi(e[0]);
+    if(!AYAR.paket || !AYAR.paket[ad]) return null;
+    if(!PAKF[ad]) PAKF[ad] = oku("kucuk", ad);
+    return PAKF[ad].then(function(f){ return e[1] + e[2] <= f.size ? URL.createObjectURL(f.slice(e[1], e[1] + e[2], "image/jpeg")) : null; },
+                         function(){ delete PAKF[ad]; return null; });
+  });
+}
+/* ---------- tam boy kopyalar ---------- */
+var TAM = null, TAMP = null;
+function tamHazirla(){
+  if(TAM) return Promise.resolve(TAM);
+  if(!TAMP) TAMP = db().then(function(d){
+    return new Promise(function(ok){
+      var m = new Map();
+      if(!d) return ok(m);
+      try{
+        var tx = d.transaction("tam"), c = tx.objectStore("tam").openCursor();
+        c.onsuccess = function(){ var cur = c.result; if(cur){ m.set(cur.key, cur.value); cur.continue(); } };
+        tx.oncomplete = function(){ ok(m); }; tx.onerror = function(){ ok(m); };
+      }catch(e){ ok(m); }
+    });
+  }).then(function(m){ TAM = m; TAMP = null; return m; });
+  return TAMP;
+}
+function tamUrl(rel){
+  return tamHazirla().then(function(m){
+    var e = m.get(nfc(rel)); if(!e) return null;
+    return oku("tam", e.h).then(function(f){ return URL.createObjectURL(f); }, function(){ return null; });
+  });
+}
+
+/* ---------- arşiv sayfası fotoğrafı src() ile ister; burada telefondan ya da Drive'dan bağlanır ---------- */
+var GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+window.DRIVE_SRC = function(rel){ return GIF + "#" + encodeURIComponent(rel); };
+function relOf(u){ var i = u.indexOf("#"); return i < 0 ? "" : decodeURIComponent(u.slice(i + 1)); }
+function koy(el, u, rel, blobMu){
+  if(el._dp !== rel){ if(blobMu) URL.revokeObjectURL(u); return false; }
+  if(blobMu) el.addEventListener("load", function f(){ el.removeEventListener("load", f); setTimeout(function(){ URL.revokeObjectURL(u); }, 3000); });
+  el.classList.remove("dpyok"); el.src = u; return true;
+}
+var notZ = 0;
+function notGoster(t){ clearTimeout(notZ); if(!t){ not.style.display = "none"; return; } not.textContent = t; not.style.display = "block"; notZ = setTimeout(function(){ not.style.display = "none"; }, 3500); }
+function driveResim(el, rel, buyuk){
+  if(!online() || !tokOk()) return Promise.resolve(false);
+  return dosya(rel).then(function(f){
+    if(!f || el._dp !== rel) return false;
+    if(f.thumbnailLink){
+      var u = f.thumbnailLink.replace(/=s\d+[^/]*$/, "") + (buyuk ? "=s1600" : "=s480");
+      return new Promise(function(ok){
+        var im = new Image();
+        im.onload = function(){ ok(koy(el, u, rel, false)); };
+        im.onerror = function(){ driveBlob(el, rel, f).then(ok); };
+        im.src = u;
+      });
+    }
+    return driveBlob(el, rel, f);
+  }, function(){ return false; });
+}
+function driveBlob(el, rel, f){
+  return slot(function(){ return api(API + "/" + f.id + "?alt=media").then(function(r){ return r.blob(); }); })
+    .then(function(b){ return koy(el, URL.createObjectURL(b), rel, true); }, function(){ return false; });
+}
+function bagla(el){
+  var rel = el._dp;
+  if(el.id === "lbi"){
+    tamUrl(rel).then(function(u){
+      if(u){ koy(el, u, rel, true); notGoster(""); return; }
+      kucukUrl(rel).then(function(k){
+        if(k) koy(el, k, rel, true);
+        driveResim(el, rel, true).then(function(tamam){
+          if(tamam || el._dp !== rel) return;
+          if(k) notGoster(online() ? "Küçük önizleme · tam boy için ⇩ düğmesinden Drive'a bağlan" : "Küçük önizleme · tam boy için internet gerekli");
+          else { el.classList.add("dpyok"); notGoster("Bu fotoğraf telefonda yok"); }
+        });
+      });
+    });
+    return;
+  }
+  kucukUrl(rel).then(function(k){
+    if(k){ koy(el, k, rel, true); return; }
+    tamUrl(rel).then(function(u){
+      if(u){ koy(el, u, rel, true); return; }
+      driveResim(el, rel, false).then(function(tamam){ if(!tamam && el._dp === rel) el.classList.add("dpyok"); });
+    });
+  });
+}
+var io = "IntersectionObserver" in window ? new IntersectionObserver(function(es){
+  es.forEach(function(e){ if(e.isIntersecting){ io.unobserve(e.target); bagla(e.target); } });
+}, {rootMargin: "900px 0px"}) : null;
+function isle(el){
+  if(el.tagName === "IMG"){
+    var s = el.getAttribute("src") || "";
+    if(s.lastIndexOf(GIF, 0) !== 0 || s.length === GIF.length) return;
+    var rel = relOf(s); if(!rel || rel === el._dp) return;
+    el._dp = rel; el.classList.remove("dpyok");
+    if(io && el.id !== "lbi") io.observe(el); else bagla(el);
+  } else if(el.tagName === "A"){
+    var h = el.getAttribute("href") || "";
+    if(h.lastIndexOf(GIF, 0) !== 0) return;
+    el.setAttribute("data-dpl", relOf(h)); el.setAttribute("href", "#"); el.removeAttribute("target");
+  }
+}
+function tara(n){
+  if(n.nodeType !== 1) return;
+  if(n.tagName === "IMG" || n.tagName === "A") isle(n);
+  if(n.querySelectorAll) [].forEach.call(n.querySelectorAll("img,a"), isle);
+}
+new MutationObserver(function(ms){
+  ms.forEach(function(m){ if(m.type === "attributes") isle(m.target); else [].forEach.call(m.addedNodes, tara); });
+}).observe(document.documentElement, {childList: true, subtree: true, attributes: true, attributeFilter: ["src", "href"]});
+var bekleyenler = [];
+function yenidenBagla(){   /* Drive'a bağlanınca açılamamış fotoğrafları yeniden dene */
+  [].forEach.call(document.querySelectorAll("img.dpyok"), function(el){ if(el._dp){ el.classList.remove("dpyok"); bagla(el); } });
+}
+document.addEventListener("click", function(e){   /* ekler Drive'da açılır */
+  var a = e.target.closest && e.target.closest("a[data-dpl]"); if(!a) return;
+  e.preventDefault(); e.stopPropagation();
+  if(!tokOk()){ window.alert("Ekleri açmak için internet ve Drive bağlantısı gerekli; ⇩ düğmesinden Drive'a bağlan."); return; }
+  var w = window.open("", "_blank");
+  dosya(a.getAttribute("data-dpl")).then(function(f){
+    if(f && f.webViewLink){ if(w) w.location.href = f.webViewLink; else window.open(f.webViewLink, "_blank"); }
+    else { if(w) w.close(); window.alert("Bu dosya Drive'da bulunamadı."); }
+  }, function(e2){ if(w) w.close(); window.alert(e2.message); });
+}, true);
+
+/* ---------- düzeltmeler Drive'a yazılır: uygulamanın kendi klasörü ---------- */
+window.ARSIV_KAYDET = function(blob){
+  if(!online()) return Promise.reject(new Error("İnternet yok; düzeltmelerin telefonda duruyor, internet gelince yeniden kaydet"));
+  if(!tokOk()) return Promise.reject(baglanHata());
+  var AD = "arsiv-duzeltmeler-telefon.txt";
+  return liste("name = '" + tirnak(TEL_KLASOR) + "' and mimeType = '" + KLASOR + "' and 'root' in parents and trashed = false", "id").then(function(fs){
+    if(fs.length) return fs[0].id;
+    return api(API + "?fields=id", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: TEL_KLASOR, mimeType: KLASOR})})
+      .then(function(r){ return r.json(); }).then(function(j){ return j.id; });
+  }).then(function(kid){
+    return liste("'" + kid + "' in parents and name = '" + AD + "' and trashed = false", "id").then(function(fs){
+      var var_ = fs.length > 0, s = "arsiv" + Date.now();
+      var meta = var_ ? {} : {name: AD, parents: [kid], mimeType: "text/plain"};
+      var govde = new Blob(["--" + s + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(meta) + "\r\n--" + s + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n", blob, "\r\n--" + s + "--\r\n"]);
+      return api(UP + (var_ ? "/" + fs[0].id : "") + "?uploadType=multipart&fields=id", {method: var_ ? "PATCH" : "POST", body: govde, headers: {"Content-Type": "multipart/related; boundary=" + s}});
+    });
+  });
+};
+
+/* ---------- arşiv sayfası ve verileri ---------- */
+function uygula(t){
+  var m = /^﻿?\s*window\.([A-Za-z_]+)\s*=\s*/.exec(t); if(!m) return;
+  window[m[1]] = JSON.parse(t.slice(m[0].length).replace(/;\s*$/, ""));
+}
+function sayfaKur(html){
+  var d = new DOMParser().parseFromString(html, "text/html"), ana = "";
+  [].forEach.call(d.querySelectorAll("style"), function(st){ var x = document.createElement("style"); x.textContent = st.textContent; document.head.insertBefore(x, document.head.firstChild); });
+  [].forEach.call(d.querySelectorAll("script"), function(sc){ if(!sc.getAttribute("src")) ana += sc.textContent + "\n"; sc.parentNode.removeChild(sc); });
+  [].slice.call(d.body.childNodes).forEach(function(n){ document.body.insertBefore(document.importNode(n, true), yuk); });
+  return ana.replace("function src(rel){ return rel.split('/').map(encodeURIComponent).join('/'); }", "function src(rel){ return window.DRIVE_SRC(rel); }");
+}
+function kokDosyalari(ikinci){
+  return kokBul().then(function(id){ return liste("'" + id + "' in parents and mimeType != '" + KLASOR + "' and trashed = false", "id,name,md5Checksum,size"); })
+    .then(function(fs){
+      if(!ikinci && !fs.some(function(f){ return f.name === "veri.js"; })){ delete AYAR.kok; ayarKaydet(); YOL = {}; COCUK = {}; DOSYA = {}; return kokDosyalari(true); }
+      return fs;
+    });
+}
+function veriGuncelle(ilk){
+  return kokDosyalari().then(function(fs){
+    var m = {}; fs.forEach(function(f){ m[nfc(f.name)] = f; });
+    if(!m["veri.js"] || !m[nfc(SAYFA)]) throw new Error("Drive'daki arşiv klasöründe Arşiv.html ya da veri.js yok");
+    AYAR.md5 = AYAR.md5 || {};
+    var lazim = [SAYFA].concat(VERI).filter(function(ad){ var f = m[nfc(ad)]; return f && AYAR.md5[ad] !== f.md5Checksum; });
+    AYAR.kontrol = Date.now(); ayarKaydet();
+    if(!lazim.length) return 0;
+    var toplam = lazim.reduce(function(s, ad){ return s + (+m[nfc(ad)].size || 0); }, 0);
+    return onay(ilk ? 0 : toplam).then(function(){
+      var is = isBasla("Veriler güncelleniyor"); is.hedefBayt = toplam;
+      return Promise.all(lazim.map(function(ad){
+        var f = m[nfc(ad)];
+        return slot(function(){ return api(API + "/" + f.id + "?alt=media").then(function(r){ return r.text(); }); }).then(function(t){
+          return dbKoy(ad === SAYFA ? "sayfa" : "veri:" + ad, t).then(function(){ AYAR.md5[ad] = f.md5Checksum; is.bayt += +f.size || 0; is.n++; ilerle(); });
+        });
+      })).then(function(){ AYAR.guncel = Date.now(); ayarKaydet(); isBitir(""); return lazim.length; }, function(e){ isBitir(""); throw e; });
+    });
+  });
+}
+
+/* ---------- indirme işleri ---------- */
+var IS = null, kilit = null, ilerleZ = 0;
+function isBasla(ad){
+  if(IS) throw new Error("Önce süren iş bitsin");
+  IS = {ad: ad, dur: false, n: 0, top: 0, bayt: 0, hedefBayt: 0, hata: 0, bas: Date.now()};
+  uyanik(true); panelCiz(); return IS;
+}
+function isBitir(sonuc){ IS = null; uyanik(false); if(sonuc !== undefined) SONUC = sonuc; panelCiz(); }
+var SONUC = "";
+function uyanik(ac){
+  try{
+    if(ac && navigator.wakeLock) navigator.wakeLock.request("screen").then(function(l){ kilit = l; }).catch(function(){});
+    else if(!ac && kilit){ kilit.release(); kilit = null; }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", function(){ if(IS && document.visibilityState === "visible") uyanik(true); });
+function ilerle(){ if(!ilerleZ) ilerleZ = setTimeout(function(){ ilerleZ = 0; ilerlemeCiz(); }, 300); }
+function onay(bayt){
+  return (navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve(null)).then(function(es){
+    if(es && es.quota && bayt > 0 && es.quota - es.usage < bayt * 1.1) throw new Error("Telefonda yeterli yer yok: " + mb(bayt) + " gerekli, " + mb(es.quota - es.usage) + " boş");
+    if(AYAR.sor && bayt > 20e6 && mobilVeri() && !window.confirm("Mobil verideyken yaklaşık " + mb(bayt) + " indirilecek. Devam edilsin mi?")) throw new Error("Vazgeçildi");
+  });
+}
+function onizlemeIndir(){
+  var aid;
+  return klasor("_analiz").then(function(id){
+    if(!id) throw new Error("Önizleme dosyaları Drive'da henüz yok");
+    aid = id; return liste("'" + id + "' in parents and trashed = false", "id,name,md5Checksum,size");
+  }).then(function(fs){
+    var pk = fs.filter(function(f){ return /^kucuk-\d+\.bin$/.test(f.name); }), ls = fs.filter(function(f){ return f.name === "kucuk-liste.txt"; })[0];
+    if(!ls || !pk.length) throw new Error("Önizleme dosyaları Drive'da henüz yok");
+    AYAR.paket = AYAR.paket || {};
+    var lazim = pk.filter(function(f){ return AYAR.paket[f.name] !== f.md5Checksum; });
+    var listeLazim = AYAR.liste !== ls.md5Checksum;
+    var toplam = lazim.reduce(function(s, f){ return s + (+f.size || 0); }, 0) + (listeLazim ? +ls.size || 0 : 0);
+    if(!toplam) return "Önizlemeler zaten güncel";
+    return onay(toplam).then(function(){
+      var is = isBasla("Önizlemeler indiriliyor"); is.hedefBayt = toplam;
+      var z = Promise.resolve();
+      lazim.forEach(function(f){ z = z.then(function(){ if(!is.dur) return paketIndir(f, is); }); });
+      if(listeLazim) z = z.then(function(){
+        if(is.dur) return;
+        return api(API + "/" + ls.id + "?alt=media").then(function(r){ return r.text(); }).then(function(t){ return dbKoy("liste", t); })
+          .then(function(){ AYAR.liste = ls.md5Checksum; ayarKaydet(); KUC = null; is.bayt += +ls.size || 0; });
+      });
+      return z.then(function(){
+        AYAR.onizleme = lazim.length || AYAR.onizleme ? Date.now() : AYAR.onizleme; ayarKaydet();
+        isBitir(is.dur ? "Durduruldu; kaldığı yerden devam eder" : "Önizlemeler hazır"); yenidenBagla();
+      }, function(e){ isBitir(""); throw e; });
+    });
+  });
+}
+function paketIndir(f, is){
+  var once = is.bayt;
+  delete AYAR.paket[f.name]; ayarKaydet(); delete PAKF[f.name];
+  return api(API + "/" + f.id + "?alt=media").then(function(r){
+    var akis = r.body.pipeThrough(new TransformStream({transform: function(ch, c){
+      if(is.dur){ c.error(new Error("durduruldu")); return; }
+      is.bayt += ch.byteLength; ilerle(); c.enqueue(ch);
+    }}));
+    return yaz("kucuk", f.name, akis);
+  }).then(function(){ AYAR.paket[f.name] = f.md5Checksum; ayarKaydet(); delete PAKF[f.name]; },
+          function(e){ is.bayt = once; if(!is.dur) throw e; });
+}
+function tamIndir(yollar, ad){
+  return tamHazirla().then(function(T){
+    var lazim = yollar.filter(function(p){ return !T.has(nfc(p)); });
+    if(!lazim.length) return "Bunların hepsi zaten telefonda";
+    var tahmini = lazim.length * (AYAR.ort || ORT_FOTO);
+    return onay(tahmini).then(function(){
+      var is = isBasla(ad); is.top = lazim.length; is.hedefBayt = tahmini;
+      var gr = new Map();
+      lazim.forEach(function(p){ var d = p.slice(0, p.lastIndexOf("/")); if(!gr.has(d)) gr.set(d, []); gr.get(d).push(p); });
+      var dirs = Array.from(gr.keys()), k = 0, durdu = null;
+      function isci(){
+        if(is.dur || durdu || k >= dirs.length) return Promise.resolve();
+        var d = dirs[k++], ps = gr.get(d);
+        return klasor(d).then(function(id){ return id ? dosyalar(id) : {}; }).then(function(m){
+          var z = Promise.resolve();
+          ps.forEach(function(p){ z = z.then(function(){
+            if(is.dur || durdu) return;
+            var f = m[nfc(p.slice(p.lastIndexOf("/") + 1))];
+            if(!f){ is.hata++; is.n++; ilerle(); return; }
+            return tekIndir(f, p, is);
+          }); });
+          return z;
+        }).catch(function(e){ if(e && e.baglan){ durdu = e; return; } is.hata += ps.length; is.n += ps.length; ilerle(); }).then(isci);
+      }
+      return Promise.all([isci(), isci(), isci(), isci()]).then(function(){
+        var say = 0, top = 0; TAM.forEach(function(v){ say++; top += v.b || 0; }); if(say > 20){ AYAR.ort = Math.round(top / say); ayarKaydet(); }
+        if(durdu){ isBitir("Drive bağlantısının süresi doldu; Drive'a bağlanıp yeniden başlat, kaldığı yerden devam eder"); return; }
+        isBitir(is.dur ? "Durduruldu; kaldığı yerden devam eder" : (is.hata ? sayi(is.n - is.hata) + " fotoğraf indi, " + sayi(is.hata) + " tanesi Drive'da bulunamadı" : sayi(is.n) + " fotoğraf telefona indi"));
+      });
+    });
+  });
+}
+function tekIndir(f, p, is){
+  return api(API + "/" + f.id + "?alt=media").then(function(r){ return r.blob(); }).then(function(b){
+    var h = ozet(nfc(p)) + (/\.png$/i.test(p) ? ".png" : ".jpg"), e = {h: h, b: b.size};
+    return yaz("tam", h, b).then(function(){
+      TAM.set(nfc(p), e); is.n++; is.bayt += b.size; ilerle();
+      return dbIs("tam", "readwrite", function(s){ return s.put(e, nfc(p)); });
+    });
+  }).catch(function(e){ if(e && e.baglan) throw e; is.hata++; is.n++; ilerle(); });
+}
+function tamSil(){
+  return (OPFS_OK ? opfs().then(function(d){ return d.removeEntry("tam", {recursive: true}).catch(function(){}); })
+                  : dbIs("dosya", "readwrite", function(s){ return s.delete(IDBKeyRange.bound("tam/", "tam/\uffff")); }))
+    .then(function(){ return dbIs("tam", "readwrite", function(s){ return s.clear(); }); })
+    .then(function(){ TAM = new Map(); });
+}
+
+/* ---------- hangi fotoğraflar: seçki, favori, çekim listesi; gemiye ve sisteme göre gruplar ---------- */
+var GRUP = null;
+function anahtarYol(){
+  var G = window.ARSIV_GEMI || {}, K = {};
+  (G.foto || []).forEach(function(f){ K[f.j + "|" + f.n + "|" + (f.t || "")] = f.p; });
+  return K;
+}
+function oncelikliler(){
+  var K = anahtarYol(), out = new Set();
+  function ekle(k){ var p = K[k] || (k.indexOf("/") >= 0 && k.indexOf("|") < 0 ? k : null); if(p && RESIM.test(p)) out.add(p); }
+  var S = (window.ARSIV_SECKI && window.ARSIV_SECKI.isler) || {};
+  Object.keys(S).forEach(function(j){ (S[j].g || []).forEach(function(g){ if(g[1]) ekle(g[1][g[0]]); }); });
+  try{ var SK = JSON.parse(localStorage.getItem("arsiv-secki-v1") || "{}") || {}; Object.keys(SK).forEach(function(j){ (SK[j].sel || []).forEach(ekle); }); }catch(e){}
+  var FO = window.ARSIV_FOTO || {};
+  (FO.favori || []).forEach(ekle);
+  try{ var FV = JSON.parse(localStorage.getItem("arsiv-favori-v1") || "{}") || {}; Object.keys(FV).forEach(function(k){ if(FV[k] === 1) ekle(k); }); }catch(e){}
+  var E = FO.etiket || {}; Object.keys(E).forEach(function(p){ if(E[p] && E[p][2] === "c" && RESIM.test(p)) out.add(p); });
+  return Array.from(out);
+}
+function gruplar(){
+  if(GRUP) return GRUP;
+  var G = window.ARSIV_GEMI || {}, A = window.ARSIV || {}, isler = A.isler || [], sisAd = A.sistemler || [], jid = {}, gor = new Set();
+  isler.forEach(function(j){ if(j && j.id) jid[j.id] = j; });
+  var gemi = new Map(), sis = new Map();
+  function ekle(m, k, p){ if(!m.has(k)) m.set(k, []); m.get(k).push(p); }
+  function koy(p, j){
+    if(typeof p !== "string" || gor.has(p) || !RESIM.test(p)) return; gor.add(p);
+    var s = p.split("/"), gemide = s[0] === "Gemi Isleri";
+    ekle(gemi, (s[1] || "Diğer") + (gemide ? ", gemi işleri" : ", tersane işleri"), p);
+    var sn = j ? sisAd[j.s] : null;
+    if(!sn){ var f = s[gemide ? 3 : 2]; sn = f ? f.replace(/^\d+\s+/, "") : "Diğer"; }
+    ekle(sis, sn, p);
+  }
+  (G.foto || []).forEach(function(f){ koy(f.p, jid[f.j]); });
+  (A.fotolar || []).forEach(function(p){ if(p) koy(p[2], isler[p[0]]); });   /* arşiv sayfası gemi fotoğraflarını da bu listeye ekler */
+  GRUP = {gemi: gemi, sis: sis};
+  return GRUP;
+}
+
+/* ---------- çevrimdışı paneli ---------- */
+var btn, panel;
+function arayuz(){
+  btn = document.createElement("button"); btn.id = "cvBtn"; btn.type = "button"; btn.title = "Çevrimdışı kullanım"; btn.textContent = "⇩";
+  btn.onclick = function(){ panel.classList.contains("acik") ? panelKapat() : panelAc(); };
+  panel = document.createElement("div"); panel.id = "cvPanel";
+  document.body.appendChild(btn); document.body.appendChild(panel);
+  panel.addEventListener("click", panelTik);
+  panel.addEventListener("change", function(e){ if(e.target.id === "cvSor"){ AYAR.sor = e.target.checked; ayarKaydet(); } else secimOzet(); });
+  window.addEventListener("online", panelCiz); window.addEventListener("offline", panelCiz);
+  panelCiz();
+}
+function panelAc(){ panel.classList.add("acik"); tamHazirla().then(panelCiz); }
+function panelKapat(){ panel.classList.remove("acik"); }
+function hata(e){ if(e && e.message === "Vazgeçildi") return; SONUC = (e && e.message) || String(e); panelCiz(); }
+function panelTik(e){
+  var b = e.target.closest("button"); if(!b) return;
+  var a = b.getAttribute("data-a");
+  if(a === "kapat") return panelKapat();
+  if(a === "baglan") return baglan().then(function(){ SONUC = "Drive'a bağlandı"; panelCiz(); }, hata);
+  if(a === "dur"){ if(IS) IS.dur = true; return; }
+  if(IS) return;
+  SONUC = "";
+  var is;
+  if(a === "veri") is = veriGuncelle(false).then(function(n){ if(n){ SONUC = "Yeni veriler alındı, sayfa yenileniyor"; panelCiz(); setTimeout(function(){ location.reload(); }, 900); } else { SONUC = "Veriler zaten güncel"; panelCiz(); } });
+  else if(a === "onizleme") is = onizlemeIndir().then(function(t){ if(typeof t === "string"){ SONUC = t; panelCiz(); } });
+  else if(a === "oncelik") is = tamIndir(oncelikliler(), "Seçki, favori ve çekim listesi indiriliyor").then(function(t){ if(typeof t === "string"){ SONUC = t; panelCiz(); } });
+  else if(a === "secilen"){
+    var set = new Set(), g = gruplar();
+    [].forEach.call(panel.querySelectorAll("input[data-g]:checked"), function(c){ ((c.getAttribute("data-t") === "gemi" ? g.gemi : g.sis).get(c.getAttribute("data-g")) || []).forEach(function(p){ set.add(p); }); });
+    if(!set.size){ SONUC = "Önce listeden gemi ya da sistem seç"; panelCiz(); return; }
+    is = tamIndir(Array.from(set), "Seçilenler tam boy indiriliyor").then(function(t){ if(typeof t === "string"){ SONUC = t; panelCiz(); } });
+  }
+  else if(a === "sil"){ if(window.confirm("Telefondaki tam boy kopyalar silinsin mi? Önizlemeler ve veriler kalır.")) is = tamSil().then(function(){ SONUC = "Tam boy kopyalar silindi"; panelCiz(); }); }
+  if(is) is.catch(hata);
+}
+function ilerlemeCiz(){
+  var k = panel && panel.querySelector("#cvIs"); if(!k) return;
+  btn.classList.toggle("calisiyor", !!IS);
+  if(!IS){ k.innerHTML = SONUC ? "<div>" + esc(SONUC) + "</div>" : ""; return; }
+  var yuzde = IS.hedefBayt ? Math.min(100, IS.bayt / IS.hedefBayt * 100) : (IS.top ? IS.n / IS.top * 100 : 0);
+  if(IS.top) yuzde = IS.n / IS.top * 100;
+  k.innerHTML = "<div><b>" + esc(IS.ad) + "</b></div><div class='cubuk'><i style='width:" + yuzde.toFixed(1) + "%'></i></div>" +
+    "<div class='kucuk'>" + (IS.top ? sayi(IS.n) + " / " + sayi(IS.top) + " fotoğraf · " : "") + mb(IS.bayt) + (IS.hedefBayt ? " / " + mb(IS.hedefBayt) : "") + (IS.hata ? " · " + sayi(IS.hata) + " bulunamadı" : "") +
+    "</div><div class='kucuk'>Ekran açık kalsın; uygulamadan çıkınca indirme durur, sonra kaldığı yerden devam eder.</div><button class='ikincil' data-a='dur'>Durdur</button>";
+}
+var secimDurum = {};
+function secimOzet(){
+  [].forEach.call(panel.querySelectorAll("input[data-g]"), function(c){ secimDurum[c.getAttribute("data-t") + "|" + c.getAttribute("data-g")] = c.checked; });
+  var set = new Set(), g = gruplar(), T = TAM || new Map();
+  [].forEach.call(panel.querySelectorAll("input[data-g]:checked"), function(c){ ((c.getAttribute("data-t") === "gemi" ? g.gemi : g.sis).get(c.getAttribute("data-g")) || []).forEach(function(p){ if(!T.has(nfc(p))) set.add(p); }); });
+  var o = panel.querySelector("#cvSecOzet");
+  if(o) o.textContent = set.size ? sayi(set.size) + " fotoğraf inecek, yaklaşık " + mb(set.size * (AYAR.ort || ORT_FOTO)) : "";
+}
+function grupHtml(tur, m){
+  var T = TAM || new Map(), ort = AYAR.ort || ORT_FOTO, arr = Array.from(m.entries()).sort(function(a, b){ return b[1].length - a[1].length; });
+  return arr.map(function(x){
+    var var_ = 0; x[1].forEach(function(p){ if(T.has(nfc(p))) var_++; });
+    var id = tur + "|" + x[0];
+    return "<label><input type='checkbox' data-t='" + tur + "' data-g='" + esc(x[0]) + "'" + (secimDurum[id] ? " checked" : "") + "><span>" + esc(x[0]) + "<br><span class='kucuk'>" + sayi(x[1].length) + " fotoğraf, yaklaşık " + mb(x[1].length * ort) +
+      (var_ ? " · telefonda " + sayi(var_) : "") + "</span></span></label>";
+  }).join("");
+}
+function panelCiz(){
+  if(!panel) return;
+  btn.classList.toggle("uyari", !AYAR.onizleme);
+  btn.classList.toggle("calisiyor", !!IS);
+  if(!panel.classList.contains("acik")){ return; }
+  var T = TAM || new Map(), tamSay = 0, tamBayt = 0; T.forEach(function(v){ tamSay++; tamBayt += v.b || 0; });
+  var on = online(), bag = tokOk(), mesgul = !!IS;
+  var kucSay = KUC ? KUC.size : 0;
+  var onc = window.ARSIV_GEMI ? oncelikliler() : [], oncEksik = onc.filter(function(p){ return !T.has(nfc(p)); }).length;
+  var g = window.ARSIV_GEMI ? gruplar() : {gemi: new Map(), sis: new Map()};
+  var h = "<h3>Çevrimdışı kullanım <button class='ikincil' data-a='kapat'>Kapat</button></h3>";
+  h += "<div class='blok'><div>İnternet: <b>" + (on ? "var" : "yok") + "</b>" + (mobilVeri() ? " · mobil veri" : "") + " · Drive: <b>" + (bag ? "bağlı" : "bağlı değil") + "</b></div>" +
+       (on && !bag ? "<button data-a='baglan'>Drive'a bağlan</button>" : "") +
+       "<div class='kucuk'>İnternetsiz açılır. Telefonda olmayan bir fotoğraf internet ve Drive bağlantısı varken tam boy açılır, tanesi yaklaşık 0,2 MB tutar.</div></div>";
+  h += "<div class='blok'><div><b>Veriler</b> · son güncelleme " + tarih(AYAR.guncel) + "</div><div class='kucuk'>Bilgisayarda yeni iş eklendiyse ya da sayfa değiştiyse buradan alınır. Genelde 20 ile 30 MB.</div>" +
+       "<button data-a='veri'" + (!on || !bag || mesgul ? " disabled" : "") + ">Verileri güncelle</button></div>";
+  h += "<div class='blok'><div><b>Önizlemeler</b> · " + (AYAR.onizleme ? "telefonda, " + tarih(AYAR.onizleme) : "henüz inmedi") + "</div>" +
+       "<div class='kucuk'>Bütün fotoğrafların küçük kopyaları, yaklaşık 1,2 GB. İnince listeler ve aramalar internetsiz görünür. Wi-Fi'da indir.</div>" +
+       "<button data-a='onizleme'" + (!on || !bag || mesgul ? " disabled" : "") + ">" + (AYAR.onizleme ? "Önizlemeleri güncelle" : "Önizlemeleri indir") + "</button></div>";
+  h += "<div class='blok'><div><b>Tam boy fotoğraflar</b> · telefonda " + sayi(tamSay) + " fotoğraf, " + mb(tamBayt) + "</div>" +
+       "<div class='kucuk'>Seçki, favori ve çekim listesi: " + sayi(onc.length) + " fotoğraf" + (oncEksik ? ", " + sayi(oncEksik) + " tanesi inecek, yaklaşık " + mb(oncEksik * (AYAR.ort || ORT_FOTO)) : ", hepsi telefonda") + ".</div>" +
+       "<button data-a='oncelik'" + (!on || !bag || mesgul || !oncEksik ? " disabled" : "") + ">Seçki, favori ve çekim listesini indir</button>" +
+       "<details><summary>Gemiye göre</summary>" + grupHtml("gemi", g.gemi) + "</details>" +
+       "<details><summary>Sisteme göre</summary>" + grupHtml("sis", g.sis) + "</details>" +
+       "<div class='kucuk' id='cvSecOzet'></div><button data-a='secilen'" + (!on || !bag || mesgul ? " disabled" : "") + ">Seçilenleri tam boy indir</button> " +
+       (tamSay ? "<button class='ikincil' data-a='sil'" + (mesgul ? " disabled" : "") + ">Tam boy kopyaları sil</button>" : "") + "</div>";
+  h += "<div class='blok' id='cvIs'></div>";
+  h += "<div class='blok'><label><input type='checkbox' id='cvSor'" + (AYAR.sor ? " checked" : "") + "><span>Mobil verideyken büyük indirmeden önce sor</span></label><div class='kucuk' id='cvDepo'></div></div>";
+  var acikDetay = [].map.call(panel.querySelectorAll("details"), function(d){ return d.open; });
+  panel.innerHTML = h;
+  [].forEach.call(panel.querySelectorAll("details"), function(d, i){ if(acikDetay[i]) d.open = true; });
+  ilerlemeCiz(); secimOzet();
+  if(navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(function(es){ var d = panel.querySelector("#cvDepo"); if(d && es) d.textContent = "Bu uygulamanın telefonda kullandığı yer " + mb(es.usage || 0) + "."; });
+}
+
+/* ---------- açılış ---------- */
+function calistir(ts){
+  var ana = sayfaKur(ts[0]);
+  ts.slice(1).forEach(function(t){ if(t) uygula(t); });
+  var s = document.createElement("script"); s.text = ana; document.body.appendChild(s);
+  yuk.style.display = "none";
+  arayuz(); depoKalici();
+  kucukHazirla();
+  if(online()) gisYukle().catch(function(){});
+  if(!AYAR.panelGoruldu){ AYAR.panelGoruldu = 1; ayarKaydet(); setTimeout(panelAc, 600); }
+}
+function ilkKurulum(){
+  if(!online()){
+    msg("İnternet yok.<br><small>Arşivi bu telefona ilk kez kurmak için bir kere internet gerekiyor.</small><br><button onclick='location.reload()'>Yeniden dene</button>");
+    return;
+  }
+  gisYukle().catch(function(){});
+  msg("Arşivi bu telefona kuralım.<br><small>Drive'daki arşivden sayfa ve veriler iner, yaklaşık 30 MB.<br>Fotoğrafları sonra alttaki ⇩ düğmesinden indirirsin.</small><br><button id='ilkBaglan'>Drive'a bağlan</button>");
+  document.getElementById("ilkBaglan").onclick = function(){
+    baglan().then(function(){ msg("Arşiv Drive'da aranıyor…"); return kokBul(); })
+      .then(function(){ msg("Sayfa ve veriler indiriliyor…<br><small>Birkaç dakika sürebilir</small>"); return veriGuncelle(true); })
+      .then(function(){ location.reload(); })
+      .catch(function(e){ IS = null; msg("Kurulum tamamlanamadı.<br><small>" + esc((e && e.message) || e) + "</small><br><button onclick='location.reload()'>Yeniden dene</button>"); });
+  };
+}
+function basla(){
+  Promise.all([dbAl("sayfa")].concat(VERI.map(function(ad){ return dbAl("veri:" + ad); }))).then(function(ts){
+    if(!ts[0] || !ts[1] || !ts[2]) return ilkKurulum();
+    try{ calistir(ts); }catch(e){ msg("Arşiv açılamadı.<br><small>" + esc(e.message) + "</small><br><button onclick='localStorage.removeItem(\"arsiv-tel-ayar\");indexedDB.deleteDatabase(\"arsiv-telefon\");location.reload()'>Verileri yeniden indir</button>"); }
+  });
+}
+if("serviceWorker" in navigator) window.addEventListener("load", function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
+basla();
+})();
+</script>
+</body>
+</html>
